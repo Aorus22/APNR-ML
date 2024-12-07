@@ -1,18 +1,15 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask import Flask, request, jsonify, send_file
 from ultralytics import YOLO
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
 import pandas as pd
 import csv
 import re
-import torch
-import os
-import io
+import base64
 
 # Flask app initialization
 app = Flask(__name__)
-CORS(app)
 
 # Load YOLOv8 model
 yolo_model = YOLO("best.pt")
@@ -21,6 +18,7 @@ yolo_model = YOLO("best.pt")
 trocr_model = VisionEncoderDecoderModel.from_pretrained("rayyaa/finetune-trocr")
 trocr_processor = TrOCRProcessor.from_pretrained("rayyaa/finetune-trocr")
 
+
 def perform_ocr(cropped_image):
     # Preproses gambar untuk TrOCR
     pixel_values = trocr_processor(images=cropped_image, return_tensors="pt").pixel_values
@@ -28,9 +26,11 @@ def perform_ocr(cropped_image):
     text = trocr_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
     return text.strip()
 
+
 # Load plate region mapping
 plat_nomor_wilayah = {}
 file_path = 'plates_region.csv'
+
 
 with open(file_path, mode='r', encoding='utf-8') as csv_file:
     csv_reader = csv.DictReader(csv_file)
@@ -39,12 +39,14 @@ with open(file_path, mode='r', encoding='utf-8') as csv_file:
         area = row['area'].strip()         # Kolom 'area'
         plat_nomor_wilayah[kode] = area
 
+
 def get_plate_region(plat_text):
     """Find region based on plate code."""
     match = re.match(r'^[A-Z]{1,2}', plat_text.strip().upper())
     if match:
         kode_awal = match.group(0)
         return plat_nomor_wilayah.get(kode_awal, "Wilayah tidak ditemukan")
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -55,14 +57,13 @@ def predict():
     # Get the uploaded image
     file = request.files['file']
     image = Image.open(file.stream).convert('RGB')
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("arialbd.ttf", size=25)
 
     # YOLO Plate Detection
     results = yolo_model(image)
     detections = results[0].boxes.xyxy.cpu().numpy()  # Get bounding boxes
-
-    # List untuk menyimpan hasil
-    predictions = []
-    
+      
     if len(detections) == 0:
         return jsonify({'error': 'No plate detected'}), 404
 
@@ -83,12 +84,25 @@ def predict():
         # Append plate info
         plates_info.append({'plate_number': plate_number, 'region': region})
 
-    return jsonify({'plates': plates_info})
+        # Draw bounding box and plate number on the image
+        draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
+        draw.text((x_min, y_min - 27), plate_number, fill="red", font=font)
+
+    # Convert annotated image to base64
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+    # Return JSON response with plates information and annotated image
+    response = {
+        'plates': plates_info,
+        'annotated_image': img_str  # Base64-encoded image
+    }
+    return jsonify(response)
 
 @app.route('/')
 def hello_world():
     return 'Hello, Flask World!'
 
 if __name__ == '__main__':
-    app.run(debug=False, host="0.0.0.0", port=5000)
-
+    app.run(debug=True)
