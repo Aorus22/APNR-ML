@@ -12,11 +12,11 @@ import base64
 app = Flask(__name__)
 
 # Load YOLOv8 model
-yolo_model = YOLO("best.pt")
+yolo_model = YOLO("best.pt").to('cpu')
 
 # Load TrOCR model and processor
-trocr_model = VisionEncoderDecoderModel.from_pretrained("rayyaa/finetune-trocr")
-trocr_processor = TrOCRProcessor.from_pretrained("rayyaa/finetune-trocr")
+trocr_model = VisionEncoderDecoderModel.from_pretrained("models/rayyaa/finetune-trocr")
+trocr_processor = TrOCRProcessor.from_pretrained("models/rayyaa/finetune-trocr")
 
 
 def perform_ocr(cropped_image):
@@ -63,7 +63,7 @@ def predict():
     # YOLO Plate Detection
     results = yolo_model(image)
     detections = results[0].boxes.xyxy.cpu().numpy()  # Get bounding boxes
-      
+
     if len(detections) == 0:
         return jsonify({'error': 'No plate detected'}), 404
 
@@ -105,4 +105,4 @@ def hello_world():
     return 'Hello, Flask World!'
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
