@@ -3,21 +3,19 @@ from ultralytics import YOLO
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
-import pandas as pd
-import csv
 import re
 import base64
+import json
 
 # Flask app initialization
 app = Flask(__name__)
 
 # Load YOLOv8 model
-yolo_model = YOLO("best.pt").to('cpu')
+yolo_model = YOLO("best.pt")
 
 # Load TrOCR model and processor
 trocr_model = VisionEncoderDecoderModel.from_pretrained("models/rayyaa/finetune-trocr")
 trocr_processor = TrOCRProcessor.from_pretrained("models/rayyaa/finetune-trocr")
-
 
 def perform_ocr(cropped_image):
     # Preproses gambar untuk TrOCR
@@ -26,27 +24,29 @@ def perform_ocr(cropped_image):
     text = trocr_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
     return text.strip()
 
+# Memuat data dari file JSON
+with open('regional_code.json', 'r') as file:
+    data = json.load(file)
 
-# Load plate region mapping
-plat_nomor_wilayah = {}
-file_path = 'plates_region.csv'
-
-
-with open(file_path, mode='r', encoding='utf-8') as csv_file:
-    csv_reader = csv.DictReader(csv_file)
-    for row in csv_reader:
-        kode = row['code'].strip().upper()  # Kolom 'code'
-        area = row['area'].strip()         # Kolom 'area'
-        plat_nomor_wilayah[kode] = area
-
-
-def get_plate_region(plat_text):
-    """Find region based on plate code."""
-    match = re.match(r'^[A-Z]{1,2}', plat_text.strip().upper())
-    if match:
-        kode_awal = match.group(0)
-        return plat_nomor_wilayah.get(kode_awal, "Wilayah tidak ditemukan")
-
+def get_plate_region(plate):
+    # Memisahkan kode depan dari plat nomor
+    region_code = plate.split()[0].upper()
+    
+    # Memastikan kode plat valid dan ada dalam data JSON
+    if region_code not in data:
+        return "Daerah tidak ditemukan"
+    
+    # Mengambil kode belakang dari plat nomor untuk mencocokkan regex
+    last_code = plate.split()[-1].upper()
+    
+    # Menelusuri regex yang ada dalam data JSON untuk kode wilayah tersebut
+    for pattern, region in data[region_code].items():
+        if pattern == "default":
+            continue
+        if re.match(pattern, last_code):
+            return region
+    
+    return data[region_code].get("default", "Daerah tidak ditemukan")
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -57,8 +57,6 @@ def predict():
     # Get the uploaded image
     file = request.files['file']
     image = Image.open(file.stream).convert('RGB')
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("arialbd.ttf", size=25)
 
     # YOLO Plate Detection
     results = yolo_model(image)
@@ -74,35 +72,30 @@ def predict():
         plate_image = image.crop((x_min, y_min, x_max, y_max))
 
         # TrOCR OCR Prediction
-        plate_text = trocr_processor(plate_image, return_tensors="pt").pixel_values
-        decoded_text = trocr_model.generate(plate_text)
-        plate_number = trocr_processor.batch_decode(decoded_text, skip_special_tokens=True)[0]
+        plate_number = perform_ocr(plate_image)
 
         # Find region
         region = get_plate_region(plate_number)
 
-        # Append plate info
-        plates_info.append({'plate_number': plate_number, 'region': region})
-
         # Draw bounding box and plate number on the image
+        annotated_image = image.copy()
+        draw = ImageDraw.Draw(annotated_image)
+        font = ImageFont.truetype("arialbd.ttf", size=25)
         draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
         draw.text((x_min, y_min - 27), plate_number, fill="red", font=font)
 
-    # Convert annotated image to base64
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        # Convert annotated image to base64
+        buffered = BytesIO()
+        annotated_image.save(buffered, format="JPEG")
+        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+        # Append plate info
+        plates_info.append({'plate_number': plate_number, 'region': region, 'annotated_image': img_str})
 
     # Return JSON response with plates information and annotated image
-    response = {
-        'plates': plates_info,
-        'annotated_image': img_str  # Base64-encoded image
-    }
+    response = {'plates': plates_info}
     return jsonify(response)
 
-@app.route('/')
-def hello_world():
-    return 'Hello, Flask World!'
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8080)
+
