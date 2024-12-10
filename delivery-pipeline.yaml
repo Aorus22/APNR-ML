@@ -1,0 +1,25 @@
+apiVersion: clouddeploy.googleapis.com/v1
+kind: DeliveryPipeline
+metadata:
+  name: apnr-ML-pipeline
+description: CI/CD Pipeline for APNR ML
+serialPipeline:
+  stages:
+    - targetId: dev
+      profiles:
+        - deployment-profile
+      strategy:
+        standard:
+          verify: false
+    - targetId: staging
+      profiles:
+        - deployment-profile
+      strategy:
+        standard:
+          verify: false
+    - targetId: prod
+      profiles:
+        - deployment-profile
+      strategy:
+        standard:
+          verify: true

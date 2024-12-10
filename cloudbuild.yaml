@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'asia-southeast2-docker.pkg.dev/apnr-development-4ea10/apnr-ml/apnr-ml:$SHORT_SHA', '.']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-southeast2-docker.pkg.dev/apnr-development-4ea10/apnr-ml/apnr-ml:$SHORT_SHA']
+
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'deploy'
+      - 'apply'
+      - '--file=delivery-pipeline.yaml'
+      - '--region=asia-southeast2'
+
+images:
+  - 'asia-southeast2-docker.pkg.dev/apnr-development-4ea10/apnr-ml/apnr-ml:$SHORT_SHA'
